@@ -81,15 +81,9 @@ def _execute_agent(message: str, result_queue: Queue) -> None:
         from core.agent import Agent
         from core.providers.ollama import OllamaProvider
         from core.tools import ToolsManager
-        from tools.execute_shell import ExecuteShellTool
-        from tools.read_file import ReadFileTool
-        from tools.write_file import WriteFileTool
 
         provider = OllamaProvider()
         tools = ToolsManager()
-        tools.register(ExecuteShellTool())
-        tools.register(ReadFileTool())
-        tools.register(WriteFileTool())
 
         agent = Agent(provider, tools)
 
