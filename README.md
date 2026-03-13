@@ -1,4 +1,4 @@
-# OClaw
+# OClaw (WIP)
 
 OClaw is a Python-based AI agent runtime with a FastAPI streaming backend, Ollama provider integration, and an interactive CLI client.
 
@@ -62,3 +62,11 @@ uv run main.py --cli
 - **Cannot connect from containerized app to Ollama**: `localhost` inside a container points to the container itself. Use a host-reachable address (for example `host.docker.internal` where supported).
 - **Model errors**: ensure your configured `OLLAMA_MODEL` exists in Ollama before starting the app.
 - **CLI connection errors**: start backend first with `uv run main.py --serve`.
+
+## Roadmap
+
+- [ ] Add more providers (e.g. OpenAI, Anthropic)
+- [ ] Add more CLI features (e.g. new session, list sessions, load session, delete session, etc)
+- [ ] Add dynamic skill loading
+- [ ] Add dynamic personality loading (e.g. AGENTS.md, USER.md, SOUL.md, etc)
+- [ ] Add more configuration options
