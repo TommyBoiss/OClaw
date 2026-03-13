@@ -1,6 +1,7 @@
 from typing import TYPE_CHECKING
 
 from .context import ContextManager
+from .logger import Logger
 from .sessions import SessionsManager, ToolCall
 
 from .providers.base import (
@@ -29,16 +30,35 @@ class Agent:
         self.context = ContextManager()
         self.sessions = SessionsManager()
         self.system_prompt = system_prompt
+        self.logger = Logger.get("agent.py")
 
-    async def stream(self, user_message: str, max_iterations: int = 5):
+    async def stream(
+        self,
+        user_message: str,
+        max_iterations: int = 5,
+        request_id: str | None = None,
+    ):
         session = self.sessions.load_latest_or_create()
+        session_id = session.metadata.session_id
+        self.logger.info(
+            "agent.start",
+            request_id=request_id,
+            session_id=session_id,
+            max_iterations=max_iterations,
+        )
+        self.logger.info(
+            "agent.user_input",
+            request_id=request_id,
+            session_id=session_id,
+            message_chars=len(user_message),
+        )
         self.context.load(session.messages)
         self.context.append_user(user_message)
 
         tool_schemas = self.tools.get_schemas()
 
         try:
-            for _ in range(max_iterations):
+            for iteration in range(1, max_iterations + 1):
                 response_content = ""
                 response_thinking = ""
                 tool_calls: list[ToolCall] = []
@@ -58,13 +78,26 @@ class Agent:
                     messages,
                     tools=tool_schemas if tool_schemas else None,
                 ):
-
                     if isinstance(chunk, ResponseChunk):
                         response_content += chunk.content
+                        self.logger.debug(
+                            "assistant.response.chunk",
+                            request_id=request_id,
+                            session_id=session_id,
+                            iteration=iteration,
+                            content=chunk.content,
+                        )
                         yield {"type": "token", "content": chunk.content}
 
                     elif isinstance(chunk, ThinkingChunk):
                         response_thinking += chunk.content
+                        self.logger.debug(
+                            "assistant.thinking.chunk",
+                            request_id=request_id,
+                            session_id=session_id,
+                            iteration=iteration,
+                            content=chunk.content,
+                        )
                         yield {"type": "thinking", "content": chunk.content}
 
                     elif isinstance(chunk, ToolCallChunk):
@@ -76,6 +109,14 @@ class Agent:
                             },
                         }
                         tool_calls.append(normalized_call)
+                        self.logger.info(
+                            "assistant.tool_call",
+                            request_id=request_id,
+                            session_id=session_id,
+                            iteration=iteration,
+                            name=chunk.name,
+                            arguments=chunk.arguments,
+                        )
                         yield {
                             "type": "tool_call",
                             "name": chunk.name,
@@ -83,14 +124,43 @@ class Agent:
                         }
 
                     elif isinstance(chunk, MetricsChunk):
+                        self.logger.info(
+                            "assistant.metrics",
+                            request_id=request_id,
+                            session_id=session_id,
+                            iteration=iteration,
+                            data=chunk.data,
+                        )
                         yield {"type": "metrics", "data": chunk.data}
 
                     elif isinstance(chunk, DoneChunk):
                         continue
 
                     elif isinstance(chunk, ErrorChunk):
+                        self.logger.error(
+                            "agent.error",
+                            request_id=request_id,
+                            session_id=session_id,
+                            iteration=iteration,
+                            message=chunk.error,
+                        )
                         yield {"type": "error", "message": chunk.error}
                         return
+
+                self.logger.info(
+                    "assistant.thinking.final",
+                    request_id=request_id,
+                    session_id=session_id,
+                    iteration=iteration,
+                    chars=len(response_thinking),
+                )
+                self.logger.info(
+                    "assistant.response.final",
+                    request_id=request_id,
+                    session_id=session_id,
+                    iteration=iteration,
+                    chars=len(response_content),
+                )
 
                 self.context.append_assistant(
                     content=response_content,
@@ -107,6 +177,15 @@ class Agent:
                     tool_args = tool_call["function"]["arguments"]
 
                     tool_result = await self.tools.execute(tool_name, tool_args)
+                    self.logger.info(
+                        "tool.output",
+                        request_id=request_id,
+                        session_id=session_id,
+                        iteration=iteration,
+                        name=tool_name,
+                        arguments_count=len(tool_args),
+                        result_chars=len(tool_result),
+                    )
 
                     yield {"type": "tool_end", "result": tool_result}
 
@@ -116,3 +195,9 @@ class Agent:
         finally:
             session.messages = self.context.messages
             self.sessions.overwrite(session)
+            self.logger.info(
+                "agent.end",
+                request_id=request_id,
+                session_id=session_id,
+                message_count=len(self.context.messages),
+            )

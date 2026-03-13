@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from .logger import Logger
+
 
 @dataclass
 class Config:
@@ -15,8 +17,30 @@ class Config:
     num_workers: int = 4
     worker_timeout: int = 300
 
+    _ENV_MAPPING = {
+        "OLLAMA_HOST": "ollama_host",
+        "OLLAMA_MODEL": "model",
+        "MAX_ITERATIONS": "max_iterations",
+        "SERVER_HOST": "server_host",
+        "SERVER_PORT": "server_port",
+        "NUM_WORKERS": "num_workers",
+        "WORKER_TIMEOUT": "worker_timeout",
+    }
+
+    _FIELD_NAMES = {
+        "ollama_host",
+        "model",
+        "max_iterations",
+        "server_host",
+        "server_port",
+        "num_workers",
+        "worker_timeout",
+    }
+
     @classmethod
     def load(cls, config_path: str = "config.json", env_file: str = ".env") -> "Config":
+        logger = Logger.get("config.py")
+        logger.info("config.load.start", config_path=config_path, env_file=env_file)
         values: dict[str, Any] = {}
 
         config_file = Path(config_path)
@@ -24,10 +48,13 @@ class Config:
             try:
                 with open(config_file, "r", encoding="utf-8") as f:
                     file_config = json.load(f)
-                    values.update(file_config)
-            except (json.JSONDecodeError, IOError):
+                    values.update(cls._normalize_keys(file_config))
+                logger.info("config.load.file.success", path=str(config_file))
+            except json.JSONDecodeError, IOError:
+                logger.error("config.load.file.failed", path=str(config_file))
                 pass
 
+        env_file_values: dict[str, Any] = {}
         env_path = Path(env_file)
         if env_path.exists():
             try:
@@ -40,30 +67,47 @@ class Config:
                         key = key.strip().upper()
                         value = value.strip().strip("\"'")
                         if key:
-                            values[key] = value
+                            env_file_values[key] = value
+                logger.info("config.load.env.success", path=str(env_path))
             except IOError:
+                logger.error("config.load.env.failed", path=str(env_path))
                 pass
 
-        env_mapping = {
-            "OLLAMA_HOST": "ollama_host",
-            "OLLAMA_MODEL": "model",
-            "MAX_ITERATIONS": "max_iterations",
-            "SERVER_HOST": "server_host",
-            "SERVER_PORT": "server_port",
-            "NUM_WORKERS": "num_workers",
-            "WORKER_TIMEOUT": "worker_timeout",
-        }
+        values.update(cls._normalize_keys(env_file_values))
 
-        for env_key, config_key in env_mapping.items():
+        process_env_values: dict[str, Any] = {}
+        for env_key, config_key in cls._ENV_MAPPING.items():
             env_value = os.getenv(env_key)
             if env_value is not None:
-                values[config_key] = env_value
+                process_env_values[config_key] = env_value
+
+        values.update(process_env_values)
 
         values = cls._convert_types(values)
 
         config = cls(**values)
         config.validate()
+        logger.info(
+            "config.load.done",
+            ollama_host=config.ollama_host,
+            model=config.model,
+            max_iterations=config.max_iterations,
+            server_host=config.server_host,
+            server_port=config.server_port,
+            num_workers=config.num_workers,
+            worker_timeout=config.worker_timeout,
+        )
         return config
+
+    @classmethod
+    def _normalize_keys(cls, values: dict[str, Any]) -> dict[str, Any]:
+        normalized: dict[str, Any] = {}
+        for key, value in values.items():
+            key_text = str(key)
+            mapped_key = cls._ENV_MAPPING.get(key_text.upper(), key_text)
+            if mapped_key in cls._FIELD_NAMES:
+                normalized[mapped_key] = value
+        return normalized
 
     @staticmethod
     def _convert_types(values: dict[str, Any]) -> dict[str, Any]:
@@ -78,7 +122,7 @@ class Config:
             if key in values and isinstance(values[key], str):
                 try:
                     values[key] = converter(values[key])
-                except (ValueError, TypeError):
+                except ValueError, TypeError:
                     pass
 
         return values

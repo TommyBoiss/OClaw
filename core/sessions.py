@@ -8,6 +8,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal, NotRequired, TypedDict
 
+from .logger import Logger
+
 
 Role = Literal["user", "assistant", "tool"]
 
@@ -48,6 +50,7 @@ class SessionRecord:
 class SessionsManager:
     def __init__(self, sessions_dir: str = ".sessions"):
         self.sessions_dir = Path(sessions_dir)
+        self.logger = Logger.get("sessions.py")
 
     def load_latest_or_create(self) -> SessionRecord:
         self.sessions_dir.mkdir(parents=True, exist_ok=True)
@@ -64,11 +67,17 @@ class SessionsManager:
                 metadata=metadata,
                 messages=[],
             )
+        self.logger.info("session.load.latest", file_path=str(files[-1]))
         return self._load_session(files[-1])
 
     def overwrite(self, session: SessionRecord) -> None:
         self.sessions_dir.mkdir(parents=True, exist_ok=True)
         session.metadata.last_updated = self._now_iso()
+        self.logger.info(
+            "session.overwrite.start",
+            file_path=str(session.file_path),
+            message_count=len(session.messages),
+        )
 
         temp_path = session.file_path.with_suffix(".tmp")
         with open(temp_path, "w", encoding="utf-8") as file:
@@ -76,6 +85,7 @@ class SessionsManager:
             for message in session.messages:
                 file.write(json.dumps(message, ensure_ascii=False) + "\n")
         os.replace(temp_path, session.file_path)
+        self.logger.info("session.overwrite.done", file_path=str(session.file_path))
 
     def _load_session(self, file_path: Path) -> SessionRecord:
         with open(file_path, "r", encoding="utf-8") as file:
@@ -97,6 +107,11 @@ class SessionsManager:
             last_updated=meta_data["last_updated"],
         )
         messages = [json.loads(line) for line in lines[1:]]
+        self.logger.info(
+            "session.load.done",
+            file_path=str(file_path),
+            message_count=len(messages),
+        )
         return SessionRecord(file_path=file_path, metadata=metadata, messages=messages)
 
     def _now_iso(self) -> str:

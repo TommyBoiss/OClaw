@@ -9,5 +9,6 @@ wheels/
 # Virtual environments
 .venv
 
-.sessions
-.sisyphus
+.sessions/*
+.sisyphus/*
+logs/*

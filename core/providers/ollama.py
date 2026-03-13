@@ -2,6 +2,7 @@ import json
 import httpx
 from typing import AsyncGenerator
 
+from ..logger import Logger
 from .base import (
     DoneChunk,
     ErrorChunk,
@@ -21,16 +22,27 @@ class OllamaProvider:
     ):
         from ..config import Config
 
+        self.logger = Logger.get("ollama.py")
         config = Config.load()
 
         self.base_url = base_url or config.ollama_host
         self.model = model or config.model
         self.client = httpx.AsyncClient(timeout=300.0)
+        self.logger.info(
+            "provider.ollama.init", base_url=self.base_url, model=self.model
+        )
 
     async def chat(
         self, messages: list[dict], tools: list[dict] | None = None
     ) -> AsyncGenerator[StreamingChunk, None]:
         url = f"{self.base_url}/api/chat"
+        self.logger.info(
+            "provider.ollama.chat.start",
+            url=url,
+            model=self.model,
+            message_count=len(messages),
+            tools_enabled=bool(tools),
+        )
 
         payload = {
             "model": self.model,
@@ -55,6 +67,9 @@ class OllamaProvider:
                         continue
 
                     if "error" in data:
+                        self.logger.error(
+                            "provider.ollama.chat.error", error=data["error"]
+                        )
                         yield ErrorChunk(error=f"Ollama error: {data['error']}")
                         return
 
@@ -99,13 +114,21 @@ class OllamaProvider:
                             "eval_duration_ns": eval_duration,
                             "tokens_per_second": tokens_per_second,
                         }
+                        self.logger.info(
+                            "provider.ollama.chat.done", metrics=metrics_data
+                        )
                         yield MetricsChunk(data=metrics_data)
                         yield DoneChunk(done_reason=done_reason)
                         break
 
         except httpx.HTTPStatusError as e:
+            self.logger.error(
+                "provider.ollama.http_error", status_code=e.response.status_code
+            )
             yield ErrorChunk(error=f"HTTP error: {e.response.status_code}")
         except httpx.ConnectError:
+            self.logger.error("provider.ollama.connect_error")
             yield ErrorChunk(error="Cannot connect to Ollama server")
         except Exception as e:
+            self.logger.error("provider.ollama.unexpected_error", error=str(e))
             yield ErrorChunk(error=f"Unexpected error: {e}")
